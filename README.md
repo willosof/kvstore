@@ -104,7 +104,7 @@ flowchart TD
 
   subgraph Subscriber
     S[runSubscriber SUBSCRIBE kv_updates]
-    K[Cache erase\(key\) on message payload]
+    K[Cache erase key on message payload]
   end
   I --> S
   S --> K
