@@ -3,6 +3,7 @@
 #include <boost/redis/adapter/adapt.hpp>
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
+#include <iostream>
 
 using namespace std::literals;
 
@@ -46,6 +47,15 @@ net::awaitable<void> DataLayer::setValue(const std::string& key, const std::stri
     redis::response<redis::ignore_t, long long> resp;
     co_await cmdConn_->async_exec(req, resp, net::use_awaitable);
 
+    auto publishedResult = std::get<1>(resp);
+    std::cout << "[own-update] key=" << key
+              << " bytes=" << jsonValue.size();
+    if (publishedResult.has_value()) {
+        std::cout << " published=" << publishedResult.value() << '\n';
+    } else {
+        std::cout << " publish_error" << '\n';
+    }
+
     cache_.upsert(key, jsonValue);
     co_return;
 }
@@ -68,7 +78,10 @@ net::awaitable<void> DataLayer::runSubscriber() {
         for (std::size_t i = 0; i + 2 < nodes.size(); ++i) {
             if (nodes[i].value == "message") {
                 std::string key(nodes[i + 2].value);
-                if (!key.empty()) cache_.erase(key);
+                if (!key.empty()) {
+                    std::cout << "[incoming-update] key=" << key << " -> invalidate cache" << '\n';
+                    cache_.erase(key);
+                }
             }
         }
     }

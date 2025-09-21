@@ -8,6 +8,7 @@
 #include <thread>
 #include <vector>
 #include <string>
+#include <iostream>
 #include "cache.hpp"
 #include "data_layer.hpp"
 #include "http_handlers.hpp"
@@ -29,26 +30,46 @@ net::awaitable<void> session(tcp::socket socket, App& app) {
 
     for (;;) {
         http::request<http::string_body> req;
-        co_await http::async_read(stream, buffer, req, net::use_awaitable);
+        boost::system::error_code read_ec;
+        co_await http::async_read(stream, buffer, req, net::redirect_error(net::use_awaitable, read_ec));
+        if (read_ec) break;
 
         http::response<http::string_body> res{http::status::not_found, req.version()};
         res.keep_alive(req.keep_alive());
 
-        const std::string target = std::string(req.target()); // e.g., /kv/mykey
-        if (req.method() == http::verb::get && (target == "/" || target == "/health")) {
-            http::response<http::string_body> ok{http::status::ok, req.version()};
-            ok.set(http::field::content_type, "text/plain; charset=utf-8");
-            ok.body() = "json-kv-service";
-            ok.prepare_payload();
-            ok.keep_alive(req.keep_alive());
-            res = std::move(ok);
-        } else if (target.rfind("/kv/", 0) == 0) {
-            auto key = target.substr(4);
-            if (req.method() == http::verb::get) {
-                res = co_await handleGetKV(req, key, *app.data);
-            } else if (req.method() == http::verb::post) {
-                res = co_await handlePostKV(req, key, app.serverCfg, *app.data);
+        try {
+            const std::string target = std::string(req.target());
+            if (req.method() == http::verb::get && (target == "/" || target == "/health")) {
+                http::response<http::string_body> ok{http::status::ok, req.version()};
+                ok.set(http::field::content_type, "text/plain; charset=utf-8");
+                ok.body() = "json-kv-service";
+                ok.prepare_payload();
+                ok.keep_alive(req.keep_alive());
+                res = std::move(ok);
+            } else if (target.rfind("/kv/", 0) == 0) {
+                auto key = target.substr(4);
+                if (req.method() == http::verb::get) {
+                    res = co_await handleGetKV(req, key, *app.data);
+                } else if (req.method() == http::verb::post) {
+                    res = co_await handlePostKV(req, key, app.serverCfg, *app.data);
+                }
             }
+        } catch (const std::exception& e) {
+            std::cerr << "[request-error] " << e.what() << '\n';
+            http::response<http::string_body> err{http::status::internal_server_error, req.version()};
+            err.set(http::field::content_type, "text/plain; charset=utf-8");
+            err.keep_alive(false);
+            err.body() = "internal error";
+            err.prepare_payload();
+            res = std::move(err);
+        } catch (...) {
+            std::cerr << "[request-error] unknown" << '\n';
+            http::response<http::string_body> err{http::status::internal_server_error, req.version()};
+            err.set(http::field::content_type, "text/plain; charset=utf-8");
+            err.keep_alive(false);
+            err.body() = "internal error";
+            err.prepare_payload();
+            res = std::move(err);
         }
 
         co_await http::async_write(stream, res, net::use_awaitable);
