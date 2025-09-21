@@ -42,8 +42,9 @@ sequenceDiagram
   participant Re as Redis
   participant Ca as LocalCache
 
-  Note over R: GET / -> 200 "json-kv-service"
-  Note over R: GET /health -> 200 "json-kv-service"
+  Note over R: GET / -> 200
+  Note over R: GET /health -> 200/503 with Redis status
+  Note over R: GET /metrics -> 200 Prometheus text exposition
 
   C->>R: GET /kv/{key} (If-None-Match?)
   R->>H: handleGetKV(req, key)
@@ -85,7 +86,9 @@ sequenceDiagram
   end
 ```
 
-- **GET /** or **GET /health**: returns `json-kv-service`.
+- **GET /**: simple readiness.
+- **GET /health**: liveness + Redis health; returns `{"redis":"up"}` (200) or `{"redis":"down"}` (503).
+- **GET /metrics**: Prometheus metrics in text exposition format.
 - **GET /kv/:key**: returns JSON value or 404; supports strong `ETag` + `If-None-Match` for conditional GETs; `Cache-Control: no-cache` signals revalidation.
 - **POST /kv/:key**: writes raw JSON string; requires header `X-API-Key` matching `KV_API_KEY`; returns `{ "ok": true }`.
 
@@ -123,6 +126,9 @@ Notes:
 # Health
 curl -s http://localhost:8001/health
 
+# Metrics
+curl -s http://localhost:8001/metrics | head -n 20
+
 # Write (replace API key)
 curl -s -X POST http://localhost:8001/kv/user:42 \
   -H "X-API-Key: change_me" \
@@ -134,8 +140,45 @@ etag=$(curl -si http://localhost:8001/kv/user:42 | awk '/^ETag:/ {print $2}')
 curl -si http://localhost:8001/kv/user:42 -H "If-None-Match: $etag"
 ```
 
+### Metrics
+Exported at `GET /metrics` in Prometheus text format. Counters include:
+
+- `http_requests_total` with `{route}`: `health`, `metrics`, `kv_get`, `kv_post`, `other`.
+- `kv_get_requests_total`, `kv_get_hits_total`, `kv_get_misses_total`.
+- `kv_source_total{source="cache"|"redis"}` to identify data source.
+- `kv_set_requests_total` for POSTs.
+- `cache_invalidations_total` for subscriber-driven local cache evictions.
+- `redis_ping_total{status="success"|"failure"}` for health pings.
+
+Example output:
+```
+# TYPE http_requests_total counter
+http_requests_total 42
+http_requests_total{route="health"} 5
+http_requests_total{route="metrics"} 3
+http_requests_total{route="kv_get"} 20
+http_requests_total{route="kv_post"} 2
+http_requests_total{route="other"} 12
+# TYPE kv_get_requests_total counter
+kv_get_requests_total 20
+# TYPE kv_get_hits_total counter
+kv_get_hits_total 17
+# TYPE kv_get_misses_total counter
+kv_get_misses_total 3
+# TYPE kv_source_total counter
+kv_source_total{source="cache"} 15
+kv_source_total{source="redis"} 5
+# TYPE kv_set_requests_total counter
+kv_set_requests_total 2
+# TYPE cache_invalidations_total counter
+cache_invalidations_total 4
+# TYPE redis_ping_total counter
+redis_ping_total{status="success"} 5
+redis_ping_total{status="failure"} 1
+```
+
 ### Future Enhancements
 - Include instance ID in pub/sub payload to skip self-invalidations.
 - Add TTLs or size limits to `LocalCache`.
 - Input validation for POSTed JSON and optional schema enforcement.
-- Structured error bodies and metrics.
+- Structured error bodies and histogram metrics for request latency.
