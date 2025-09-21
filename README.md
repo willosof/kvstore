@@ -8,15 +8,23 @@ flowchart LR
   Client[[HTTP Client]]
   subgraph Service[json-kv-service]
     Router[HTTP Router (Boost.Beast)]
-    Handlers[Handlers]\nGET /kv/:key\nPOST /kv/:key
+    Handlers[Handlers]
+    GetKV[GET /kv/:key]
+    PostKV[POST /kv/:key]
     Data[DataLayer]
-    Cache[LocalCache]\n(shared_mutex + unordered_map)
+    Cache[LocalCache (shared_mutex + unordered_map)]
   end
   Redis[(Redis)]
 
-  Client -->|HTTP| Router --> Handlers --> Data
-  Data <-->|get/set| Redis
-  Data <-->|upsert/tryGet| Cache
+  Client -->|HTTP| Router
+  Router --> Handlers
+  Handlers --> GetKV
+  Handlers --> PostKV
+  GetKV --> Data
+  PostKV --> Data
+  Data --> Redis
+  Redis --> Data
+  Data -->|upsert/tryGet| Cache
   Data -->|PUBLISH kv_updates| Redis
 ```
 
@@ -70,7 +78,8 @@ sequenceDiagram
     H-->>C: 403
   else valid
     H->>D: setValue(key, json)
-    D->>Re: SET key json; PUBLISH kv_updates key
+    D->>Re: SET key json
+    D->>Re: PUBLISH kv_updates key
     D->>Ca: upsert(key, json)
     H-->>C: 200 {"ok":true}
   end
@@ -86,7 +95,7 @@ flowchart TD
   A[GET /kv/:key] --> B{LocalCache has key?}
   B -- yes --> C[Return cached value]
   B -- no --> D[Redis GET]
-  D -->|found| E[Cache.upsert(key, value) -> return]
+  D -->|found| E[Cache.upsert(key, value) then return]
   D -->|nil| F[404]
 
   G[POST /kv/:key] --> H[Redis SET]
@@ -94,7 +103,7 @@ flowchart TD
   H --> J[Cache.upsert(key, value)]
 
   subgraph Subscriber
-    S[runSubscriber]\nSUBSCRIBE kv_updates
+    S[runSubscriber SUBSCRIBE kv_updates]
   end
   I --> S
 ```
