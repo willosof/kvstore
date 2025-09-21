@@ -1,5 +1,6 @@
 #include "data_layer.hpp"
 #include <boost/redis.hpp>
+#include <boost/redis/adapter/adapt.hpp>
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
 
@@ -55,9 +56,21 @@ net::awaitable<void> DataLayer::runSubscriber() {
     redis::response<redis::ignore_t> subResp;
     co_await subConn_->async_exec(subReq, subResp, net::use_awaitable);
 
+    redis::generic_response push;
+    subConn_->set_receive_response(push);
+
     for (;;) {
-        auto res = co_await subConn_->async_receive(net::use_awaitable);
-        (void)res; // ignore payload for now
+        // Clear previous push contents and await next push
+        push = redis::generic_response{};
+        co_await subConn_->async_receive(net::use_awaitable);
+
+        auto const& nodes = push.value();
+        for (std::size_t i = 0; i + 2 < nodes.size(); ++i) {
+            if (nodes[i].value == "message") {
+                std::string key(nodes[i + 2].value);
+                if (!key.empty()) cache_.erase(key);
+            }
+        }
     }
 }
 

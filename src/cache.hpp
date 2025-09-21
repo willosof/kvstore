@@ -23,6 +23,11 @@ public:
         map_.erase(key);
     }
 
+    void clear() {
+        std::unique_lock<std::shared_mutex> guard(mutex_);
+        map_.clear();
+    }
+
 private:
     mutable std::shared_mutex mutex_;
     std::unordered_map<std::string, std::string> map_;

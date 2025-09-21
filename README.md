@@ -104,13 +104,15 @@ flowchart TD
 
   subgraph Subscriber
     S[runSubscriber SUBSCRIBE kv_updates]
+    K[Cache erase(key) on message payload]
   end
   I --> S
+  S --> K
 ```
 
 Notes:
 - Cache is warmed on GET misses and on successful POSTs.
-- A long-running subscriber coroutine (`runSubscriber`) subscribes to `kv_updates`; current code reads messages but ignores payloads. This is a hook for multi-replica cache invalidation if you add erase/refresh logic.
+- The subscriber (`runSubscriber`) now parses pub/sub messages and erases only the specific key from `LocalCache` using the message payload (app-level pub/sub; not using Redis keyspace notifications).
 
 ### Configuration
 - **Env**: `KV_API_KEY` (required), `PORT` (default 8001), `BIND_HOST` (default 0.0.0.0), `REDIS_HOST` (default 127.0.0.1), `REDIS_PORT` (default 6379)
@@ -133,7 +135,7 @@ curl -si http://localhost:8001/kv/user:42 -H "If-None-Match: $etag"
 ```
 
 ### Future Enhancements
-- Use pub/sub messages to invalidate or refresh other replicas' caches (`LocalCache::erase`) using the key payload.
+- Include instance ID in pub/sub payload to skip self-invalidations.
 - Add TTLs or size limits to `LocalCache`.
 - Input validation for POSTed JSON and optional schema enforcement.
 - Structured error bodies and metrics.
