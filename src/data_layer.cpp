@@ -7,8 +7,8 @@
 
 using namespace std::literals;
 
-DataLayer::DataLayer(net::io_context& io, LocalCache& cache, const RedisConfig& cfg)
-    : io_(io), cache_(cache), cfg_(cfg) {
+DataLayer::DataLayer(net::io_context& io, LocalCache& cache, const RedisConfig& cfg, Metrics& metrics)
+    : io_(io), cache_(cache), cfg_(cfg), metrics_(metrics) {
 
     redis::config rc;
     rc.addr.host = cfg_.host;
@@ -22,7 +22,12 @@ DataLayer::DataLayer(net::io_context& io, LocalCache& cache, const RedisConfig& 
 }
 
 net::awaitable<std::optional<std::string>> DataLayer::getValue(const std::string& key) {
-    if (auto v = cache_.tryGet(key)) co_return v;
+    metrics_.incKvGetRequests();
+    if (auto v = cache_.tryGet(key)) {
+        metrics_.incKvGetHits();
+        metrics_.incKvSourceCache();
+        co_return v;
+    }
 
     redis::request req;
     req.push("GET", key);
@@ -31,15 +36,24 @@ net::awaitable<std::optional<std::string>> DataLayer::getValue(const std::string
     co_await cmdConn_->async_exec(req, resp, net::use_awaitable);
 
     auto r0 = std::get<0>(resp);
-    if (!r0.has_value()) co_return std::nullopt;
+    if (!r0.has_value()) {
+        metrics_.incKvGetMisses();
+        co_return std::nullopt;
+    }
     auto valueOpt = r0.value();
-    if (!valueOpt) co_return std::nullopt;
+    if (!valueOpt) {
+        metrics_.incKvGetMisses();
+        co_return std::nullopt;
+    }
 
+    metrics_.incKvGetHits();
+    metrics_.incKvSourceRedis();
     if (!cache_.tryGet(key)) cache_.upsert(key, *valueOpt);
     co_return valueOpt;
 }
 
 net::awaitable<void> DataLayer::setValue(const std::string& key, const std::string& jsonValue) {
+    metrics_.incKvSetRequests();
     redis::request req;
     req.push("SET", key, jsonValue);
     req.push("PUBLISH", cfg_.channel, key);
@@ -81,9 +95,29 @@ net::awaitable<void> DataLayer::runSubscriber() {
                 if (!key.empty()) {
                     std::cout << "[incoming-update] key=" << key << " -> invalidate cache" << '\n';
                     cache_.erase(key);
+                    metrics_.incCacheInvalidations();
                 }
             }
         }
+    }
+}
+
+net::awaitable<bool> DataLayer::pingRedis() {
+    try {
+        redis::request req;
+        req.push("PING");
+        redis::response<std::string> resp;
+        co_await cmdConn_->async_exec(req, resp, net::use_awaitable);
+        auto r0 = std::get<0>(resp);
+        if (r0.has_value() && r0.value() == "PONG") {
+            metrics_.incRedisPingSuccess();
+            co_return true;
+        }
+        metrics_.incRedisPingFailure();
+        co_return false;
+    } catch (...) {
+        metrics_.incRedisPingFailure();
+        co_return false;
     }
 }
 

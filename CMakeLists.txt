@@ -40,6 +40,7 @@ add_executable(json_kv_service
   src/data_layer.cpp
   src/http_handlers.hpp
   src/http_handlers.cpp
+  src/metrics.hpp
   src/boost_redis_src.cpp
 )
 

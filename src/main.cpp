@@ -12,6 +12,7 @@
 #include "cache.hpp"
 #include "data_layer.hpp"
 #include "http_handlers.hpp"
+#include "metrics.hpp"
 
 namespace net = boost::asio;
 namespace http = boost::beast::http;
@@ -21,6 +22,7 @@ struct App {
     ServerConfig serverCfg;
     RedisConfig redisCfg;
     LocalCache cache;
+    Metrics metrics;
     std::unique_ptr<DataLayer> data;
 };
 
@@ -39,20 +41,36 @@ net::awaitable<void> session(tcp::socket socket, App& app) {
 
         try {
             const std::string target = std::string(req.target());
+            // count every incoming HTTP request
+            app.metrics.incHttpTotal();
             if (req.method() == http::verb::get && (target == "/" || target == "/health")) {
-                http::response<http::string_body> ok{http::status::ok, req.version()};
-                ok.set(http::field::content_type, "text/plain; charset=utf-8");
-                ok.body() = "json-kv-service";
-                ok.prepare_payload();
-                ok.keep_alive(req.keep_alive());
-                res = std::move(ok);
+                app.metrics.incHttpRouteHealth();
+                bool up = co_await app.data->pingRedis();
+                http::response<http::string_body> h{up ? http::status::ok : http::status::service_unavailable, req.version()};
+                h.set(http::field::content_type, "application/json");
+                h.body() = std::string("{\"redis\":\"") + (up ? "up" : "down") + "\"}";
+                h.prepare_payload();
+                h.keep_alive(req.keep_alive());
+                res = std::move(h);
+            } else if (req.method() == http::verb::get && target == "/metrics") {
+                app.metrics.incHttpRouteMetrics();
+                http::response<http::string_body> m{http::status::ok, req.version()};
+                m.set(http::field::content_type, "text/plain; version=0.0.4; charset=utf-8");
+                m.body() = app.metrics.renderPrometheus();
+                m.prepare_payload();
+                m.keep_alive(req.keep_alive());
+                res = std::move(m);
             } else if (target.rfind("/kv/", 0) == 0) {
                 auto key = target.substr(4);
                 if (req.method() == http::verb::get) {
+                    app.metrics.incHttpRouteKvGet();
                     res = co_await handleGetKV(req, key, *app.data);
                 } else if (req.method() == http::verb::post) {
+                    app.metrics.incHttpRouteKvPost();
                     res = co_await handlePostKV(req, key, app.serverCfg, *app.data);
                 }
+            } else {
+                app.metrics.incHttpRouteOther();
             }
         } catch (const std::exception& e) {
             std::cerr << "[request-error] " << e.what() << '\n';
@@ -112,7 +130,7 @@ int main(int argc, char** argv) {
         .serverCfg = ServerConfig{.apiKey = apiKey},
         .redisCfg = rcfg
     };
-    app.data = std::make_unique<DataLayer>(io, app.cache, app.redisCfg);
+    app.data = std::make_unique<DataLayer>(io, app.cache, app.redisCfg, app.metrics);
 
     net::co_spawn(io, app.data->runSubscriber(), net::detached);
 

@@ -5,6 +5,7 @@
 #include <string>
 #include <memory>
 #include "cache.hpp"
+#include "metrics.hpp"
 
 namespace net = boost::asio;
 namespace redis = boost::redis;
@@ -17,16 +18,18 @@ struct RedisConfig {
 
 class DataLayer {
 public:
-    DataLayer(net::io_context& io, LocalCache& cache, const RedisConfig& cfg);
+    DataLayer(net::io_context& io, LocalCache& cache, const RedisConfig& cfg, Metrics& metrics);
 
     net::awaitable<std::optional<std::string>> getValue(const std::string& key);
     net::awaitable<void> setValue(const std::string& key, const std::string& jsonValue);
     net::awaitable<void> runSubscriber(); // long-running task
+    net::awaitable<bool> pingRedis();
 
 private:
     net::io_context& io_;
     LocalCache& cache_;
     RedisConfig cfg_;
+    Metrics& metrics_;
     std::shared_ptr<redis::connection> cmdConn_;
     std::shared_ptr<redis::connection> subConn_;
 };
