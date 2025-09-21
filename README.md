@@ -100,7 +100,7 @@ flowchart TD
 
   G[POST /kv/:key] --> H[Redis SET]
   H --> I[Redis PUBLISH kv_updates]
-  H --> J[Cache.upsert(key, value)]
+  H --> J[Cache upsert key value]
 
   subgraph Subscriber
     S[runSubscriber SUBSCRIBE kv_updates]
