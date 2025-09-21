@@ -7,12 +7,12 @@ A minimal asynchronous JSON key-value HTTP service backed by Redis with a local 
 flowchart LR
   Client[[HTTP Client]]
   subgraph Service[json-kv-service]
-    Router[HTTP Router (Boost.Beast)]
+    Router[HTTP Router - Boost.Beast]
     Handlers[Handlers]
     GetKV[GET /kv/:key]
     PostKV[POST /kv/:key]
     Data[DataLayer]
-    Cache[LocalCache (shared_mutex + unordered_map)]
+    Cache[LocalCache - shared_mutex + unordered_map]
   end
   Redis[(Redis)]
 
@@ -95,7 +95,7 @@ flowchart TD
   A[GET /kv/:key] --> B{LocalCache has key?}
   B -- yes --> C[Return cached value]
   B -- no --> D[Redis GET]
-  D -->|found| E[Cache.upsert(key, value) then return]
+  D -->|found| E[Cache upsert key value then return]
   D -->|nil| F[404]
 
   G[POST /kv/:key] --> H[Redis SET]
