@@ -1,4 +1,4 @@
-## json-kv-service
+## KISS Key Value Store
 
 A minimal asynchronous JSON key-value HTTP service backed by Redis with a local in-memory cache and pub/sub invalidation.
 
