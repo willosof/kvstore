@@ -39,8 +39,8 @@ sequenceDiagram
   participant R as Router (session)
   participant H as Handlers
   participant D as DataLayer
-  participant Re as Redis
   participant Ca as LocalCache
+  participant Re as Redis
 
   Note over R: GET / -> 200
   Note over R: GET /health -> 200/503 with Redis status
